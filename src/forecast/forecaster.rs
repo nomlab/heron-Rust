@@ -245,7 +245,7 @@ fn max_index(array: Array1<f32>) -> usize {
 }
 
 pub fn forecast(
-    range_recurrence: Vec<Date<Utc>>,
+    range_recurrence: &Vec<Date<Utc>>,
     range_candidate: &Vec<i64>,
     events: &Vec<Date<Utc>>,
 ) -> Date<Utc> {
@@ -266,7 +266,7 @@ pub fn forecast(
 
     let lm = get_lm_all(first, last);
     // let annu_lm = annual_lm(&recurrence, first, last);
-    println!("lm: {:?}", lm);
+    // println!("lm: {:?}", lm);
 
     let ts = get_ts(&recurrence, first, last);
     let w = get_w(ts, &lm);

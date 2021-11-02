@@ -19,7 +19,7 @@ dotenv = "0.15.0"
 oauth2 = "4.0.0-alpha.1"
 url = { version = "2", features = ["serde"] }
 google-calendar3 = "1.0"
-plotters = "^0.3.0"
+clap = "2.20.3"
 
 [dependencies.reqwest]
 version = "^0.10"

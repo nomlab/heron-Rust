@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate polars;
 
+#[macro_use]
+extern crate clap;
+
 mod forecast;
 mod google;
 
@@ -9,10 +12,10 @@ use self::google::google_auth;
 
 use chrono::prelude::*;
 use chrono::{NaiveDate, Utc};
-use plotters::prelude::*;
+use clap::{App, Arg, SubCommand};
 use std::env;
 use std::fs::File;
-use std::io::{BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -37,113 +40,167 @@ fn fiscal_year_first_date(date: Date<Utc>) -> Date<Utc> {
     return Utc.ymd(y, 4, 1);
 }
 
-// fn chart_context(score: Vec<(f32, f32)>) {
-//     // 描画先をBackendとして指定。ここでは画像に出力するためBitMapBackend
-//     let root = BitMapBackend::new("chart.png", (640, 480)).into_drawing_area();
-//     root.fill(&WHITE).unwrap();
-//
-//     // グラフの軸の設定など
-//     let mut chart = ChartBuilder::on(&root)
-//         .caption("time", ("sans-serif", 50).into_font())
-//         .margin(5)
-//         .x_label_area_size(30)
-//         .y_label_area_size(30)
-//         .build_ranged(-0f32..50f32, 0.0f32..5.0f32)
-//         .unwrap();
-//
-//     chart.configure_mesh().draw().unwrap();
-//
-//     // データの描画。(x, y)のイテレータとしてデータ点を渡す
-//     chart.draw_series(LineSeries::new(score, &RED)).unwrap();
-// }
-
 fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    let command = &args[1];
-    let calendar = &args[2];
-    let recurrence = &args[3];
-    match command.as_str() {
-        "forecast" => forecast(calendar, recurrence),
-        "show" => show(calendar, recurrence),
-        _ => println!("No matching command"),
-    }
-}
-
-fn forecast(calendar: &String, recurrence: &String) {
-    let events_list =
-        google::google_calendar::get_oneday_schedule(calendar.to_string(), recurrence.to_string());
-    let mut events: Vec<Date<Utc>> = events_list
-        .items
-        .iter()
-        .map(|i| match &i.start {
-            Some(dt) => match &dt.date_time {
-                Some(d) => d.parse::<DateTime<Utc>>().unwrap().date(),
-                None => Date::from_utc(
-                    NaiveDate::parse_from_str(&dt.date.as_ref().unwrap(), "%Y-%m-%d").unwrap(),
-                    Utc,
-                ),
-            },
-            None => Utc.ymd(2000, 1, 1),
-        })
-        .collect();
-    let first = fiscal_year_first_date(events[0]);
-    let last = events.last().unwrap().clone();
-    // let mut score: Vec<(f32, f32)> = Vec::new();
-    // let mut count: f32 = 1.0;
-    loop {
-        //
-        let range_candidates: Vec<i64> = (-3..4).collect();
-        let range_recurrence = vec![first, last];
-        let start = Instant::now();
-        let forecasted = forecaster::forecast(range_recurrence, &range_candidates, &events);
-        let end = start.elapsed();
-        events.push(forecasted); //
-        if forecasted < Utc.ymd(2021, 4, 1) {
-            continue;
-        }
-        if forecasted >= Utc.ymd(2022, 4, 1) {
-            //
-            break; //
-        } //
-          // count += 1.0;
-          // score.push((
-          //     count,
-          //     (end.as_secs() as u32 + end.subsec_nanos() / 1_000_000) as f32,
-          // ));
-          // println!(
-          //     "{}.{:0.3}秒経過",
-          //     end.as_secs(),
-          //     end.subsec_nanos() / 1_000_000
-          // );
-        println!("forecast: {:?}", forecasted);
-        let mut file = File::create("foo.txt").unwrap();
-        file.write_all(forecasted.to_string().as_bytes()).unwrap();
-    } //
-      // chart_context(score);
-}
-fn show(calendar: &String, recurrence: &String) {
-    let event_list =
-        google::google_calendar::get_oneday_schedule(calendar.to_string(), recurrence.to_string());
-    println!("items: {}", event_list.items.len());
-
-    for item in event_list.items {
-        println!(
-            "summary:{}, start:{}\nExtended property:{}",
-            item.summary.unwrap(),
-            match item.start {
-                Some(dt) => match dt.date_time {
-                    Some(d) => d,
-                    None => dt.date.unwrap(),
-                },
-                None => "No time".to_string(),
-            },
-            item.extended_properties
-                .unwrap()
-                .shared
-                .unwrap()
-                .get(&"recurrence_name".to_string())
-                .unwrap()
+    let app = App::new(crate_name!())
+        .version(crate_version!()) // バージョン情報
+        .author(crate_authors!()) // 作者情報
+        .about(crate_description!()) // このアプリについて
+        .arg(
+            Arg::with_name("command") // 位置引数を定義
+                .help("sample positional argument") // ヘルプメッセージ
+                .required(true), // この引数は必須であることを定義
+        )
+        .arg(
+            Arg::with_name("method") // オプションを定義
+                .help("Set the forecasting algorithm.") // ヘルプメッセージ
+                .short("m") // ショートコマンド
+                .long("method") // ロングコマンド
+                .takes_value(true), // 値を持つことを定義
+        )
+        .arg(
+            Arg::with_name("input") // オプションを定義
+                .help("Get training occurrence list from the FILE.") // ヘルプメッセージ
+                .short("i") // ショートコマンド
+                .long("input") // ロングコマンド
+                .takes_value(true), // 値を持つことを定義
+        )
+        .arg(
+            Arg::with_name("forecast-year") // オプションを定義
+                .help("fib") // ヘルプメッセージ
+                .short("f") // ショートコマンド
+                .long("forecast-year") // ロングコマンド
+                .takes_value(true), // 値を持つことを定義
+        )
+        .arg(
+            Arg::with_name("calendar_id") // オプションを定義
+                .help("fib") // ヘルプメッセージ
+                .short("c") // ショートコマンド
+                .long("calendar_id") // ロングコマンド
+                .takes_value(true), // 値を持つことを定義
+        )
+        .arg(
+            Arg::with_name("sampling-range") // オプションを定義
+                .help("Date range in the form of YYYY/MM/DD-YYYY/MM/DD.") // ヘルプメッセージ
+                .short("s") // ショートコマンド
+                .long("sampling-range") // ロングコマンド
+                .takes_value(true), // 値を持つことを定義
         );
+    let matches = app.get_matches();
+
+    if let Some(c) = matches.value_of("command") {
+        match c {
+            "forecast" => {
+                let mut events: Vec<Date<Utc>> = vec![];
+                let mut range_recurrence: Vec<Date<Utc>> = vec![];
+                let mut range_candidates: Vec<i64> = vec![];
+
+                //////////////////////////////////////////////////////////
+                // Option: --input
+                //////////////////////////////////////////////////////////
+                if let Some(o) = matches.value_of("input") {
+                    if let Some(calendar_id) = matches.value_of("calendar_id") {
+                        let events_list =
+                            google::google_calendar::get_oneday_schedule(calendar_id.to_string());
+                        events = events_list
+                            .items
+                            .iter()
+                            .map(|i| match &i.start {
+                                Some(dt) => match &dt.date_time {
+                                    Some(d) => d.parse::<DateTime<Utc>>().unwrap().date(),
+                                    None => Date::from_utc(
+                                        NaiveDate::parse_from_str(
+                                            &dt.date.as_ref().unwrap(),
+                                            "%Y-%m-%d",
+                                        )
+                                        .unwrap(),
+                                        Utc,
+                                    ),
+                                },
+                                None => Utc.ymd(2000, 1, 1),
+                            })
+                            .collect();
+                    } else {
+                        println!("Input calendar_id");
+                    }
+                } else {
+                    let stdin = io::stdin();
+                    let mut lines = stdin.lock().lines();
+
+                    while let Some(line) = lines.next() {
+                        // let length: i32 = line.unwrap().trim().parse().unwrap();
+                        if line.as_ref().unwrap() == &"EOF".to_string() {
+                            break;
+                        }
+                        events.push(Date::from_utc(
+                            NaiveDate::parse_from_str(&line.unwrap(), "%Y-%m-%d").unwrap(),
+                            Utc,
+                        ));
+                    }
+                }
+
+                ///////////////////////////////////////////////////
+                // Option: --sampling-range
+                ///////////////////////////////////////////////////
+                if let Some(o) = matches.value_of("sampling-range") {
+                    range_recurrence = o
+                        .split("-")
+                        .map(|d| {
+                            Date::from_utc(NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap(), Utc)
+                        })
+                        .collect();
+                } else {
+                    let first = fiscal_year_first_date(events[0]);
+                    let last = events.last().unwrap().clone();
+                    range_recurrence = vec![first, last];
+                }
+
+                ///////////////////////////////////////////////////
+                // Option: --method
+                ///////////////////////////////////////////////////
+
+                // fib
+
+                ///////////////////////////////////////////////////
+                // Option: --candidate-range
+                ///////////////////////////////////////////////////
+                if let Some(o) = matches.value_of("candidate-range") {
+                    let num: i64 = o.parse::<i64>().expect("Please num");
+                    if (num > 0) && (num % 2 == 1) {
+                        let n = (num - 1) / 2;
+                        range_candidates = (-n..=n).collect();
+                    }
+                } else {
+                    range_candidates = (-3..4).collect();
+                }
+
+                ////////////////////////////////////////////////////
+                // Option: --forecast_year
+                ////////////////////////////////////////////////////
+                if let Some(o) = matches.value_of("forecast-year") {
+                    let forecast_year: i32 = o.parse::<i32>().expect("Please num");
+                    let forecast_start = Utc.ymd(forecast_year, 4, 1);
+                    let forecast_end = Utc.ymd(forecast_year + 1, 4, 1);
+                    loop {
+                        let forecasted =
+                            forecaster::forecast(&range_recurrence, &range_candidates, &events);
+                        events.push(forecasted);
+                        if forecasted < forecast_start {
+                            continue;
+                        }
+                        if forecasted > forecast_end {
+                            break;
+                        }
+                        println!("forecast: {:?}", forecasted);
+                        range_recurrence[1] = forecasted;
+                    }
+                } else {
+                    let forecasted =
+                        forecaster::forecast(&range_recurrence, &range_candidates, &events);
+                    //println!("forecast: {:?}", forecasted);
+                }
+            }
+            "show" => println!("fib"),
+            _ => println!("No matching command"),
+        }
     }
 }

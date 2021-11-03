@@ -26,15 +26,21 @@ fn weekdays_considering_nholiday(dates: &Vec<Date<Utc>>) -> Vec<String> {
 }
 
 fn monthweek(date: &Date<Utc>) -> String {
-    ((date.day() - 1) / 7 + 1).to_string() + "w"
+    let month = date.month().to_string() + "月";
+    let week = ((date.day() - 1) / 7 + 1).to_string() + "w";
+    month + &week
 }
 
 fn monthweeks(dates: &Vec<Date<Utc>>) -> Vec<String> {
     dates.iter().map(|date| monthweek(&date)).collect()
 }
 
-fn months(dates: &Vec<Date<Utc>>) -> Vec<u32> {
-    dates.iter().map(|date| date.month()).collect()
+fn month(date: &Date<Utc>) -> String {
+    date.month().to_string() + "月"
+}
+
+fn months(dates: &Vec<Date<Utc>>) -> Vec<String> {
+    dates.iter().map(|date| month(&date)).collect()
 }
 
 ///////////////////////////////////////////
@@ -47,9 +53,9 @@ fn months(dates: &Vec<Date<Utc>>) -> Vec<u32> {
 //-----------------------------------------
 // dates  : vec!['2013/4/2', '2013/4/3', ...]
 // return :
-//           date  wday week month monthday
-//    ('2013/4/2',  Wed,   1,    4,       2
-//     '2013/4/3',  Thu,   1,    4,       3
+//           date  wday   week month monthday
+//    ('2013/4/2',  Wed, 4月1w,  4月,       2
+//     '2013/4/3',  Thu, 4月1w,  4月,       3
 //      ...
 ///////////////////////////////////////////
 fn get_params_list(dates: &Vec<Date<Utc>>) -> DataFrame {
@@ -165,51 +171,50 @@ fn get_candidates(events: &Vec<Date<Utc>>, range: &Vec<i64>, period: usize) -> V
     candidates
 }
 
-fn gen_lm(cdv: &Series) -> Vec<Series> {
+fn gen_lm(cdv: &Series) -> Vec<f32> {
     let nrow = cdv.len();
-    let col_uniq = if cdv.name() == "wday" {
-        Series::new("wdays", &["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
-    } else {
-        cdv.unique().unwrap().sort(false)
-    };
+    let mut col_uniq: Vec<String> = vec![];
+    col_uniq.push(cdv.get(0).to_string());
+    for i in 0..cdv.len() {
+        let mut flag = true;
+        for col in col_uniq.iter() {
+            if &cdv.get(i).to_string() == col {
+                flag = false;
+                break;
+            }
+        }
+        if flag {
+            col_uniq.push(cdv.get(i).to_string());
+        }
+    }
     let ncol = col_uniq.len();
 
     // let mut m: Array2<f32> = Array::zeros((nrow, ncol));
 
-    let mut vec = vec![vec![0.0; nrow]; ncol];
-    // for row in 0..nrow {
+    let mut vec: Vec<f32> = vec![0.0; nrow * ncol];
     for row in 0..nrow {
         for col in 0..ncol {
-            if cdv.get(row) == col_uniq.get(col) {
+            if cdv.get(row).to_string() == col_uniq[col] {
                 // m[[row, col]] = 1.0;
-                vec[col][row] += 1.0;
-                break;
+                vec[col * nrow + ncol] = 1.0;
             }
         }
     }
-
-    let mut param = Vec::new();
-
-    for (i, v) in vec.iter().enumerate() {
-        param.push(Series::new(&col_uniq.get(i).to_string(), v));
-    }
-    // let mut m = DataFrame::new(param).unwrap();
-    param
+    vec
 }
 
-fn get_lm_all(first: Date<Utc>, last: Date<Utc>) -> DataFrame {
+fn get_lm_all(first: Date<Utc>, last: Date<Utc>) -> Vec<f32> {
     let len = (last - first).num_days();
     let dates: Vec<Date<Utc>> = (0..=len).map(|x| first + Duration::days(x)).collect();
     let plist_alldate = get_params_list(&dates);
     let cols = plist_alldate.get_columns();
 
-    let mut param = gen_lm(&cols[0]);
+    let mut lm = gen_lm(&cols[0]);
     if cols.len() > 1 {
         for col in &cols[1..cols.len()] {
-            param.append(&mut gen_lm(&col));
+            lm.append(&mut gen_lm(&col));
         }
     }
-    let lm = DataFrame::new(param).unwrap();
     lm
 }
 
@@ -222,10 +227,10 @@ fn get_ts(recurrence: &Vec<Date<Utc>>, first: Date<Utc>, last: Date<Utc>) -> Arr
     let len = (last - first).num_days();
     let dates: Vec<Date<Utc>> = (0..=len).map(|x| first + Duration::days(x)).collect();
     let mut ts = Array::zeros(dates.len());
-    for i in 0..dates.len() {
+    for (i, val) in dates.iter().enumerate() {
         for r in recurrence {
-            if &dates[i] == r {
-                ts[i] = 1.0
+            if val == r {
+                ts[i] = 1.0;
             }
         }
     }
@@ -298,13 +303,13 @@ pub fn forecast(
     // println!("lm: {:?}", lm);
 
     let ts = get_ts(&recurrence, first, last);
-    let w = get_w(ts, &lm);
+    //    let w = get_w(ts, &lm);
+    //
+    //    let f = get_f(&candidates_plist, lm, w);
+    //
+    //    let index = max_index(f);
 
-    let f = get_f(&candidates_plist, lm, w);
-
-    let index = max_index(f);
-
-    let forecasted = candidates[index];
+    let forecasted = candidates[0];
 
     forecasted
 }

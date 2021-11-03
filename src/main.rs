@@ -12,12 +12,9 @@ use self::google::google_auth;
 
 use chrono::prelude::*;
 use chrono::{NaiveDate, Utc};
-use clap::{App, Arg, SubCommand};
+use clap::{App, Arg};
 use std::env;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::io::{self, BufRead};
 
 #[test]
 fn example() -> Result<()> {
@@ -97,7 +94,7 @@ fn main() {
                 //////////////////////////////////////////////////////////
                 // Option: --input
                 //////////////////////////////////////////////////////////
-                if let Some(o) = matches.value_of("input") {
+                if let Some(_) = matches.value_of("input") {
                     if let Some(calendar_id) = matches.value_of("calendar_id") {
                         let events_list =
                             google::google_calendar::get_oneday_schedule(calendar_id.to_string());
@@ -196,7 +193,7 @@ fn main() {
                 } else {
                     let forecasted =
                         forecaster::forecast(&range_recurrence, &range_candidates, &events);
-                    //println!("forecast: {:?}", forecasted);
+                    println!("forecast: {:?}", forecasted);
                 }
             }
             "show" => println!("fib"),

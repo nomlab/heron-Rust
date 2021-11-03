@@ -1,9 +1,9 @@
 use chrono::prelude::*;
 use chrono::{Date, Duration, Utc, Weekday};
 use jpholiday::jpholiday::JPHoliday;
-use ndarray::prelude::*;
-use ndarray_glm::{utility::standardize, Linear, ModelBuilder};
+use nalgebra::{DMatrix, DVector, RowDVector};
 use polars::prelude::*;
+use smartcore::linear::linear_regression::*;
 
 fn weekdays(date: &Date<Utc>) -> String {
     let jpholiday = JPHoliday::new();
@@ -171,7 +171,7 @@ fn get_candidates(events: &Vec<Date<Utc>>, range: &Vec<i64>, period: usize) -> V
     candidates
 }
 
-fn gen_lm(cdv: &Series) -> Vec<f32> {
+fn gen_lm(cdv: &Series) -> (Vec<String>, Vec<f64>) {
     let nrow = cdv.len();
     let mut col_uniq: Vec<String> = vec![];
     col_uniq.push(cdv.get(0).to_string());
@@ -189,33 +189,39 @@ fn gen_lm(cdv: &Series) -> Vec<f32> {
     }
     let ncol = col_uniq.len();
 
-    // let mut m: Array2<f32> = Array::zeros((nrow, ncol));
+    // let mut m: Array2<f64> = Array::zeros((nrow, ncol));
 
-    let mut vec: Vec<f32> = vec![0.0; nrow * ncol];
+    let mut vec: Vec<f64> = vec![0.0; nrow * ncol];
     for row in 0..nrow {
         for col in 0..ncol {
             if cdv.get(row).to_string() == col_uniq[col] {
                 // m[[row, col]] = 1.0;
-                vec[col * nrow + ncol] = 1.0;
+                vec[col * nrow + row] = 1.0;
             }
         }
     }
-    vec
+    return (col_uniq, vec);
 }
 
-fn get_lm_all(first: Date<Utc>, last: Date<Utc>) -> Vec<f32> {
+fn get_lm_all(first: Date<Utc>, last: Date<Utc>) -> (DMatrix<f64>, Vec<String>) {
     let len = (last - first).num_days();
     let dates: Vec<Date<Utc>> = (0..=len).map(|x| first + Duration::days(x)).collect();
     let plist_alldate = get_params_list(&dates);
     let cols = plist_alldate.get_columns();
 
-    let mut lm = gen_lm(&cols[0]);
+    let (mut col_uniq, mut lms) = gen_lm(&cols[0]);
     if cols.len() > 1 {
         for col in &cols[1..cols.len()] {
-            lm.append(&mut gen_lm(&col));
+            let (mut name, mut lm) = gen_lm(&col);
+            col_uniq.append(&mut name);
+            lms.append(&mut lm);
         }
     }
-    lm
+    let ncol = len;
+    let nrow = lms.len() as i64 / ncol;
+
+    let lms = DMatrix::from_row_slice(nrow as usize, (ncol + 1) as usize, &lms);
+    return (lms, col_uniq);
 }
 
 // fn annual_lm(dates: &Vec<Date<Utc>>, first: Date<Utc>, last: Date<Utc>) {
@@ -223,10 +229,10 @@ fn get_lm_all(first: Date<Utc>, last: Date<Utc>) -> Vec<f32> {
 //     monthdays_uni =
 // }
 
-fn get_ts(recurrence: &Vec<Date<Utc>>, first: Date<Utc>, last: Date<Utc>) -> Array1<f32> {
+fn get_ts(recurrence: &Vec<Date<Utc>>, first: Date<Utc>, last: Date<Utc>) -> Vec<f64> {
     let len = (last - first).num_days();
     let dates: Vec<Date<Utc>> = (0..=len).map(|x| first + Duration::days(x)).collect();
-    let mut ts = Array::zeros(dates.len());
+    let mut ts = vec![0.0; dates.len()];
     for (i, val) in dates.iter().enumerate() {
         for r in recurrence {
             if val == r {
@@ -237,38 +243,60 @@ fn get_ts(recurrence: &Vec<Date<Utc>>, first: Date<Utc>, last: Date<Utc>) -> Arr
     ts
 }
 
-fn get_w(ts: Array1<f32>, df: &DataFrame) -> Array1<f32> {
-    let lm = df.to_ndarray::<Float32Type>().unwrap();
-    let lm = standardize(lm);
-    let model = ModelBuilder::<Linear>::data(&ts.view(), &lm.view())
-        .build()
-        .unwrap();
-    let fit = model.fit_options().l2_reg(1e-5).fit().unwrap();
-    fit.result
+fn lm_fit(ts: Vec<f64>, data: &DMatrix<f64>) -> (Vec<f64>, f64) {
+    // 重回帰
+    // let x = data.columns(1, data.ncols() - 1).into_owned();
+    let y = RowDVector::from_row_slice(&ts);
+
+    let lr = LinearRegression::fit(
+        data,
+        &y,
+        LinearRegressionParameters {
+            solver: LinearRegressionSolverName::QR,
+        },
+    )
+    .unwrap();
+
+    let coefs = lr.coefficients().as_slice().to_vec();
+    let inter = lr.intercept();
+    return (coefs, inter);
 }
 
-fn get_f(candidates_plist: &DataFrame, lm: DataFrame, w: Array1<f32>) -> Array1<f32> {
-    let colname_lm = lm.get_column_names();
-    let mut m: Array2<f32> = Array::zeros((candidates_plist.height(), colname_lm.len()));
+fn get_w(ts: Vec<f64>, lm: &mut DMatrix<f64>) -> (Vec<f64>, f64) {
+    let dx = lm.transpose();
+
+    // 重回帰
+    let (coefs, inter) = lm_fit(ts, &dx);
+    return (coefs, inter);
+}
+
+fn get_f(
+    candidates_plist: &DataFrame,
+    coefs: Vec<f64>,
+    inter: f64,
+    colname: Vec<String>,
+) -> DVector<f64> {
+    let mut m = DMatrix::<f64>::zeros(candidates_plist.height(), colname.len());
 
     let cols = candidates_plist.get_columns();
 
     for col in cols.iter() {
-        for i in 0..m.shape()[0] {
-            for j in 0..colname_lm.len() {
-                if col.get(i).to_string() == colname_lm[j] {
-                    m[[i, j]] = 1.0;
+        for i in 0..m.nrows() {
+            for (j, val) in colname.iter().enumerate() {
+                if col.get(i).to_string() == *val {
+                    m[(i, j)] = 1.0;
                 }
             }
         }
     }
 
-    let f = m.dot(&w.slice(s![1..])) + w.slice(s![0]);
+    let coefs = DVector::from_vec(coefs);
+    let f = (m * coefs).add_scalar(inter);
 
     f
 }
 
-fn max_index(array: Array1<f32>) -> usize {
+fn max_index(array: DVector<f64>) -> usize {
     let mut index: usize = 0;
     for i in 0..array.len() {
         if array[index] < array[i] {
@@ -287,8 +315,6 @@ pub fn forecast(
     let first = range_recurrence[0];
     let last = range_recurrence[1];
     let recurrence = events;
-    let recurrence_plist = get_params_list(&recurrence);
-
     // 次の予定の候補日
     let mut period = get_big_wave_cycle(&recurrence, &range_recurrence);
     if period == 0 {
@@ -298,18 +324,18 @@ pub fn forecast(
     let candidates = get_candidates(&recurrence, &range_candidate, period);
     let candidates_plist = get_params_list(&candidates);
 
-    let lm = get_lm_all(first, last);
+    let (mut lm, cols) = get_lm_all(first, last);
     // let annu_lm = annual_lm(&recurrence, first, last);
     // println!("lm: {:?}", lm);
 
     let ts = get_ts(&recurrence, first, last);
-    //    let w = get_w(ts, &lm);
-    //
-    //    let f = get_f(&candidates_plist, lm, w);
-    //
-    //    let index = max_index(f);
+    let (coefs, inter) = get_w(ts, &mut lm);
 
-    let forecasted = candidates[0];
+    let f = get_f(&candidates_plist, coefs, inter, cols);
+
+    let index = max_index(f);
+
+    let forecasted = candidates[index];
 
     forecasted
 }

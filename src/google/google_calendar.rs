@@ -3,7 +3,6 @@ extern crate google_calendar3;
 extern crate reqwest;
 extern crate serde;
 
-use chrono::{Date, Local};
 use google_calendar3::Event;
 use reqwest::header;
 use serde::{Deserialize, Serialize};

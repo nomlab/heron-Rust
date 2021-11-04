@@ -62,6 +62,13 @@ fn main() {
                 .takes_value(true), // 値を持つことを定義
         )
         .arg(
+            Arg::with_name("recurrence_name") // オプションを定義
+                .help("fib") // ヘルプメッセージ
+                .short("r") // ショートコマンド
+                .long("recurrence_name") // ロングコマンド
+                .takes_value(true), // 値を持つことを定義
+        )
+        .arg(
             Arg::with_name("forecast-year") // オプションを定義
                 .help("fib") // ヘルプメッセージ
                 .short("f") // ショートコマンド
@@ -88,7 +95,7 @@ fn main() {
         match c {
             "forecast" => {
                 let mut events: Vec<Date<Utc>> = vec![];
-                let mut range_recurrence: Vec<Date<Utc>> = vec![];
+                let mut _range_recurrence: Vec<Date<Utc>> = vec![];
                 let mut range_candidates: Vec<i64> = vec![];
 
                 //////////////////////////////////////////////////////////
@@ -96,26 +103,32 @@ fn main() {
                 //////////////////////////////////////////////////////////
                 if let Some(_) = matches.value_of("input") {
                     if let Some(calendar_id) = matches.value_of("calendar_id") {
-                        let events_list =
-                            google::google_calendar::get_oneday_schedule(calendar_id.to_string());
-                        events = events_list
-                            .items
-                            .iter()
-                            .map(|i| match &i.start {
-                                Some(dt) => match &dt.date_time {
-                                    Some(d) => d.parse::<DateTime<Utc>>().unwrap().date(),
-                                    None => Date::from_utc(
-                                        NaiveDate::parse_from_str(
-                                            &dt.date.as_ref().unwrap(),
-                                            "%Y-%m-%d",
-                                        )
-                                        .unwrap(),
-                                        Utc,
-                                    ),
-                                },
-                                None => Utc.ymd(2000, 1, 1),
-                            })
-                            .collect();
+                        if let Some(recurrence_name) = matches.value_of("recurrence_name") {
+                            let events_list = google::google_calendar::get_oneday_schedule(
+                                calendar_id.to_string(),
+                                recurrence_name.to_string(),
+                            );
+                            events = events_list
+                                .items
+                                .iter()
+                                .map(|i| match &i.start {
+                                    Some(dt) => match &dt.date_time {
+                                        Some(d) => d.parse::<DateTime<Utc>>().unwrap().date(),
+                                        None => Date::from_utc(
+                                            NaiveDate::parse_from_str(
+                                                &dt.date.as_ref().unwrap(),
+                                                "%Y-%m-%d",
+                                            )
+                                            .unwrap(),
+                                            Utc,
+                                        ),
+                                    },
+                                    None => Utc.ymd(2000, 1, 1),
+                                })
+                                .collect();
+                        } else {
+                            println!("Input reccurrence_name");
+                        }
                     } else {
                         println!("Input calendar_id");
                     }
@@ -139,7 +152,7 @@ fn main() {
                 // Option: --sampling-range
                 ///////////////////////////////////////////////////
                 if let Some(o) = matches.value_of("sampling-range") {
-                    range_recurrence = o
+                    _range_recurrence = o
                         .split("-")
                         .map(|d| {
                             Date::from_utc(NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap(), Utc)
@@ -148,7 +161,7 @@ fn main() {
                 } else {
                     let first = fiscal_year_first_date(events[0]);
                     let last = events.last().unwrap().clone();
-                    range_recurrence = vec![first, last];
+                    _range_recurrence = vec![first, last];
                 }
 
                 ///////////////////////////////////////////////////
@@ -179,7 +192,7 @@ fn main() {
                     let forecast_end = Utc.ymd(forecast_year + 1, 4, 1);
                     loop {
                         let forecasted =
-                            forecaster::forecast(&range_recurrence, &range_candidates, &events);
+                            forecaster::forecast(&_range_recurrence, &range_candidates, &events);
                         events.push(forecasted);
                         if forecasted < forecast_start {
                             continue;
@@ -188,11 +201,11 @@ fn main() {
                             break;
                         }
                         println!("forecast: {:?}", forecasted);
-                        range_recurrence[1] = forecasted;
+                        _range_recurrence[1] = forecasted;
                     }
                 } else {
                     let forecasted =
-                        forecaster::forecast(&range_recurrence, &range_candidates, &events);
+                        forecaster::forecast(&_range_recurrence, &range_candidates, &events);
                     println!("forecast: {:?}", forecasted);
                 }
             }

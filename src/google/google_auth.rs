@@ -67,7 +67,7 @@ pub fn authorize(file: String) {
     let credentials = Credentials::new(file);
     let client = client_generate(credentials);
     let (pkce_code_challenge, pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
-    let (authorize_url, csrf_state) = client
+    let (authorize_url, _csrf_state) = client
         .authorize_url(CsrfToken::new_random)
         .add_scope(Scope::new(
             "https://www.googleapis.com/auth/calendar".to_string(),

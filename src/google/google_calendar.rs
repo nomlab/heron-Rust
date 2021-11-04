@@ -41,7 +41,7 @@ fn print_typename<T>(_: T) {
     println!("{}", std::any::type_name::<T>());
 }
 
-pub fn get_oneday_schedule(email: String) -> CalendarEvent {
+pub fn get_oneday_schedule(email: String, recurrence: String) -> CalendarEvent {
     let token: AccessTokenResponse = google_auth::get_access_token();
     let mut headers = header::HeaderMap::new();
     headers.insert(
@@ -59,6 +59,9 @@ pub fn get_oneday_schedule(email: String) -> CalendarEvent {
         ))
         .query(&[
             ("timeZone", "jst"),
+	    ("sharedExtendedProperty",
+	     &format!("recurrence_name={}", recurrence),
+	    ),
             ("maxResults", "2000"),
 	    ("orderBy", "starttime"),
 	    ("singleEvents", "true")
